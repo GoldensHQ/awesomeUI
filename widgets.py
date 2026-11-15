@@ -6,6 +6,7 @@ file into another project and import the classes directly.
 
 from __future__ import annotations
 
+import weakref
 from dataclasses import dataclass, replace
 from typing import Dict, Optional
 
@@ -33,6 +34,83 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .theme import ColorThemeManager, connect_visible_theme
+
+# Two selectable looks for the classic widget set: the original flat 'classic'
+# and the fresher translucent 'liquid' (glass) look, which is the default.
+_WIDGET_STYLE = 'liquid'
+_STYLE_LISTENERS: list = []
+
+# Standalone fallback so liquid styling works before configure_theme() runs.
+_FALLBACK = {
+    'bg_secondary': '#20242b', 'bg_tertiary': '#2d3444', 'bg_elevated': '#171a20',
+    'bg_input': '#262b34', 'text_primary': '#f5f7fa', 'text_secondary': '#a8b0bd',
+    'accent': '#7aa2ff',
+}
+
+
+def set_widget_style(style: str) -> None:
+    """Switch every classic widget between the 'classic' and 'liquid' looks."""
+    global _WIDGET_STYLE
+    if style not in ('classic', 'liquid'):
+        raise ValueError(f"unknown widget style: {style!r}")
+    if style == _WIDGET_STYLE:
+        return
+    _WIDGET_STYLE = style
+    for listener in list(_STYLE_LISTENERS):
+        listener()
+
+
+def widget_style() -> str:
+    return _WIDGET_STYLE
+
+
+def _listen_style(widget: QWidget, slot) -> None:
+    """Call ``slot`` on style changes; the entry prunes itself when the widget dies."""
+    ref = weakref.WeakMethod(slot)
+
+    def _notify():
+        method = ref()
+        if method is None:
+            try:
+                _STYLE_LISTENERS.remove(_notify)
+            except ValueError:
+                pass
+            return
+        try:
+            method()
+        except RuntimeError:
+            # The underlying C++ widget is gone; drop the dead listener.
+            try:
+                _STYLE_LISTENERS.remove(_notify)
+            except ValueError:
+                pass
+
+    _STYLE_LISTENERS.append(_notify)
+
+
+def _hook_retheme(widget: QWidget) -> None:
+    """Follow the host palette when one is configured (no-op standalone)."""
+    _listen_style(widget, widget._apply_look)
+    try:
+        connect_visible_theme(widget)
+    except RuntimeError:
+        pass
+
+
+def _c(slot: str) -> str:
+    colors = None
+    try:
+        colors = ColorThemeManager.instance().colors
+    except RuntimeError:
+        pass
+    return getattr(colors, slot) if colors is not None else _FALLBACK[slot]
+
+
+def _rgba(value: str, alpha: int) -> str:
+    color = QColor(value)
+    return f"rgba({color.red()}, {color.green()}, {color.blue()}, {alpha})"
+
 
 class Card(QFrame):
     """A simple rounded container with optional title and subtitle."""
@@ -45,12 +123,8 @@ class Card(QFrame):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("Card")
-        self.setStyleSheet(
-            "QFrame#Card { background: #20242b; border: 1px solid #343a46; "
-            "border-radius: 12px; }"
-            "QLabel { color: #f5f7fa; background: transparent; }"
-            "QLabel#CardSubtitle { color: #a8b0bd; }"
-        )
+        self._apply_look()
+        _hook_retheme(self)
         self.body = QVBoxLayout(self)
         self.body.setContentsMargins(16, 14, 16, 14)
         self.body.setSpacing(6)
@@ -67,6 +141,25 @@ class Card(QFrame):
         """Append a widget and return it, which is convenient in fluent layouts."""
         self.body.addWidget(widget)
         return widget
+
+    def _retheme(self) -> None:
+        self._apply_look()
+
+    def _apply_look(self) -> None:
+        if widget_style() == 'liquid':
+            self.setStyleSheet(
+                f"QFrame#Card {{ background: {_rgba(_c('bg_secondary'), 165)}; "
+                "border: 1px solid rgba(255, 255, 255, 28); border-radius: 16px; }"
+                f"QLabel {{ color: {_c('text_primary')}; background: transparent; }}"
+                f"QLabel#CardSubtitle {{ color: {_c('text_secondary')}; }}"
+            )
+        else:
+            self.setStyleSheet(
+                "QFrame#Card { background: #20242b; border: 1px solid #343a46; "
+                "border-radius: 12px; }"
+                "QLabel { color: #f5f7fa; background: transparent; }"
+                "QLabel#CardSubtitle { color: #a8b0bd; }"
+            )
 
 
 class StatusBadge(QLabel):
@@ -86,14 +179,30 @@ class StatusBadge(QLabel):
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(text, parent)
-        self.set_kind(kind)
+        self._kind = kind
+        self._apply_look()
+        _hook_retheme(self)
 
     def set_kind(self, kind: str) -> None:
-        foreground, background = self.COLORS.get(kind, self.COLORS["info"])
-        self.setStyleSheet(
-            f"color: {foreground}; background: {background}; padding: 3px 8px; "
-            "border-radius: 8px; font-weight: 600;"
-        )
+        self._kind = kind
+        self._apply_look()
+
+    def _retheme(self) -> None:
+        self._apply_look()
+
+    def _apply_look(self) -> None:
+        foreground, background = self.COLORS.get(self._kind, self.COLORS["info"])
+        if widget_style() == 'liquid':
+            self.setStyleSheet(
+                f"color: {foreground}; background: {_rgba(foreground, 30)}; "
+                f"border: 1px solid {_rgba(foreground, 70)}; padding: 3px 8px; "
+                "border-radius: 9px; font-weight: 600;"
+            )
+        else:
+            self.setStyleSheet(
+                f"color: {foreground}; background: {background}; padding: 3px 8px; "
+                "border-radius: 8px; font-weight: 600;"
+            )
 
 
 class SearchField(QLineEdit):
@@ -110,9 +219,27 @@ class SearchField(QLineEdit):
         self._timer.setInterval(max(0, delay_ms))
         self.textChanged.connect(self._restart_timer)
         self._timer.timeout.connect(lambda: self.searchChanged.emit(self.text()))
+        self._apply_look()
+        _hook_retheme(self)
 
     def _restart_timer(self) -> None:
         self._timer.start()
+
+    def _retheme(self) -> None:
+        self._apply_look()
+
+    def _apply_look(self) -> None:
+        if widget_style() == 'liquid':
+            self.setStyleSheet(
+                f"QLineEdit {{ background: {_rgba(_c('bg_input'), 120)}; "
+                f"color: {_c('text_primary')}; "
+                "border: 1px solid rgba(255, 255, 255, 24); border-radius: 12px; "
+                "padding: 6px 10px; }"
+                "QLineEdit:focus { border: 1px solid "
+                f"{_rgba(_c('accent'), 120)}; }}"
+            )
+        else:
+            self.setStyleSheet("")
 
 
 class LoadingButton(QPushButton):
@@ -125,6 +252,8 @@ class LoadingButton(QPushButton):
         self._label = text
         self._busy = False
         self.clicked.connect(self._emit_if_ready)
+        self._apply_look()
+        _hook_retheme(self)
 
     @property
     def is_loading(self) -> bool:
@@ -138,6 +267,24 @@ class LoadingButton(QPushButton):
     def _emit_if_ready(self) -> None:
         if not self._busy:
             self.clickedWhileReady.emit()
+
+    def _retheme(self) -> None:
+        self._apply_look()
+
+    def _apply_look(self) -> None:
+        if widget_style() == 'liquid':
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.setStyleSheet(
+                f"QPushButton {{ background: {_rgba(_c('bg_tertiary'), 150)}; "
+                f"color: {_c('text_primary')}; "
+                "border: 1px solid rgba(255, 255, 255, 30); border-radius: 12px; "
+                "padding: 7px 16px; }"
+                "QPushButton:hover { background: rgba(255, 255, 255, 16); }"
+                "QPushButton:pressed { background: rgba(255, 255, 255, 26); }"
+                f"QPushButton:disabled {{ color: {_c('text_secondary')}; }}"
+            )
+        else:
+            self.setStyleSheet("")
 
 
 class EmptyState(QWidget):
@@ -160,17 +307,34 @@ class EmptyState(QWidget):
         title_label.setStyleSheet("font-size: 16px; font-weight: 700;")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title_label)
+        self._message_label: Optional[QLabel] = None
         if message:
             message_label = QLabel(message)
             message_label.setStyleSheet("color: #8f99a8;")
             message_label.setWordWrap(True)
             message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(message_label)
+            self._message_label = message_label
         if action_text:
-            action = QPushButton(action_text)
+            action = LoadingButton(action_text)
             action.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
             action.clicked.connect(self.actionRequested)
             layout.addWidget(action, alignment=Qt.AlignmentFlag.AlignCenter)
+        self._title_label = title_label
+        self._apply_look()
+        _hook_retheme(self)
+
+    def _retheme(self) -> None:
+        self._apply_look()
+
+    def _apply_look(self) -> None:
+        if widget_style() == 'liquid':
+            self._title_label.setStyleSheet(
+                f"font-size: 16px; font-weight: 700; color: {_c('text_primary')}; "
+                "background: transparent;")
+            if self._message_label is not None:
+                self._message_label.setStyleSheet(
+                    f"color: {_c('text_secondary')}; background: transparent;")
 
 
 class Toast(QFrame):
@@ -185,14 +349,37 @@ class Toast(QFrame):
         label = QLabel(message)
         label.setStyleSheet("color: white; background: transparent;")
         layout.addWidget(label)
+        self._label = label
         close = QToolButton()
         close.setText("×")
         close.setStyleSheet("color: #cbd5e1; background: transparent; border: 0;")
         close.clicked.connect(self.close)
         layout.addWidget(close)
-        self.setStyleSheet("QFrame { background: #171a20; border: 1px solid #414957; "
-                           "border-radius: 10px; }")
+        self._close = close
+        self._apply_look()
+        _hook_retheme(self)
         QTimer.singleShot(max(0, timeout_ms), self.close)
+
+    def _retheme(self) -> None:
+        self._apply_look()
+
+    def _apply_look(self) -> None:
+        if widget_style() == 'liquid':
+            self.setStyleSheet(
+                f"QFrame {{ background: {_rgba(_c('bg_elevated'), 235)}; "
+                "border: 1px solid rgba(255, 255, 255, 40); border-radius: 14px; }"
+                f"QLabel {{ color: {_c('text_primary')}; background: transparent; }}"
+                f"QToolButton {{ color: {_c('text_secondary')}; "
+                "background: transparent; border: 0; }"
+            )
+            self._label.setStyleSheet(
+                f"color: {_c('text_primary')}; background: transparent;")
+            self._close.setStyleSheet(
+                f"color: {_c('text_secondary')}; background: transparent; border: 0;")
+        else:
+            self.setStyleSheet("QFrame { background: #171a20; border: 1px solid #414957; "
+                               "border-radius: 10px; }")
+            self._label.setStyleSheet("color: white; background: transparent;")
 
     @classmethod
     def show_message(cls, parent: QWidget, message: str, timeout_ms: int = 2500) -> "Toast":
@@ -406,6 +593,7 @@ class Sidebar(QFrame):
 
         self.setFixedWidth(t.width)
         self._apply_theme()
+        _listen_style(self, self._apply_theme)
 
     # ------------------------------------------------------------------
     # Content API
@@ -620,6 +808,28 @@ class Sidebar(QFrame):
             item.update()
         for group in self._groups.values():
             group.header.setIconSize(QSize(t.icon_size, t.icon_size))
+        if widget_style() == 'liquid':
+            accent_tint = _rgba(t.active_indicator, 34)
+            self.setStyleSheet(
+                f"QFrame#Sidebar {{ background: {_rgba(t.background, 150)}; "
+                "border-right: 1px solid rgba(255, 255, 255, 26); }}"
+                "QFrame#Sidebar QLabel, QFrame#Sidebar QWidget "
+                "{ background: transparent; }"
+                f"QLabel#SidebarSection {{ color: {t.text_muted}; font-size: 11px; "
+                "font-weight: 700; }"
+                f"QToolButton#SidebarItem, QToolButton#SidebarGroupHeader {{ "
+                f"color: {t.text}; text-align: left; border: 0; "
+                "border-radius: 10px; padding: 0 10px; "
+                f"min-height: {t.item_height}px; }}"
+                "QToolButton#SidebarItem:hover, QToolButton#SidebarGroupHeader:hover "
+                "{ background: rgba(255, 255, 255, 16); }"
+                f"QToolButton#SidebarItem:checked {{ background: {accent_tint}; "
+                "font-weight: 600; }"
+                f"QLabel#SidebarBadge {{ color: {t.text}; background: {accent_tint}; "
+                "border-radius: 8px; padding: 1px 7px; font-size: 11px; }"
+                "QFrame#SidebarSeparator { background: rgba(255, 255, 255, 14); }"
+            )
+            return
         self.setStyleSheet(
             f"QFrame#Sidebar {{ background: {t.background}; "
             f"border-right: 1px solid {t.border}; }}"

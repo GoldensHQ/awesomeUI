@@ -11,4 +11,6 @@ from .widgets import (
                       SidebarTheme,
                       StatusBadge,
                       Toast,
+                      set_widget_style,
+                      widget_style,
 )
