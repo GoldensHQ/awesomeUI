@@ -114,6 +114,10 @@ class IOSSegmentedFilter(QWidget):
     def currentData(self):
         return self._items[self._index][1]
 
+    def button(self, index):
+        """The segment's push button (callers that need to click it directly)."""
+        return self._group.button(index)
+
     def currentIndex(self):
         return self._index
 
