@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..theme import ColorThemeManager
+from src.gui.theme import ColorThemeManager
 
 
 class GlassSlider(QSlider):

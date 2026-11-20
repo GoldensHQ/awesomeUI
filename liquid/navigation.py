@@ -9,9 +9,10 @@ from PySide6.QtCore import (
     QVariantAnimation,
     Signal,
 )
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QScrollArea,
@@ -19,19 +20,24 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..theme import ColorThemeManager, theme_pixmap
-try:  # host-app chrome constants (GoldenNugget); fallbacks keep standalone builds importable
-    from src.gui.window_chrome import (  # noqa: F401 (guarded host import)
-        CONTROLS_RIGHT,
-        CONTROLS_TRAILING_INSET,
-        FLAT_BUTTON_H,
-    )
-except ImportError:
-    CONTROLS_RIGHT = False
-    CONTROLS_TRAILING_INSET = 8
-    FLAT_BUTTON_H = 32
+from src.gui.theme import ColorThemeManager, theme_pixmap
+from src.gui.window_chrome import (
+    CONTROLS_RIGHT,
+    CONTROLS_TRAILING_INSET,
+    FLAT_BUTTON_H,
+)
 
 from .controls import GlassPanel, LiquidButton
+
+#: Top margin of the header content. macOS keeps the band its traffic lights
+#: float over; the flat chrome (Windows/Linux) puts the caption buttons in the
+#: top-right corner, so there the header moves up into that band instead.
+TOP_MARGIN = 8 if CONTROLS_RIGHT else 44
+
+#: Header height (category pills hidden / shown). The flat header starts higher,
+#: so it is that much shorter — the content box stays exactly the same.
+_HEIGHT = 94 - (44 - TOP_MARGIN)
+_HEIGHT_PILLS = 128 - (44 - TOP_MARGIN)
 
 # Ensure resources are registered (icons used below)
 try:
@@ -52,19 +58,18 @@ class BackCapsule(LiquidButton):
 
     def __init__(self,parent=None):
         super().__init__('',parent)
-        self.setIconSize(QSize(14,14))
+        self.setIconSize(QSize(16,16))
         if CONTROLS_RIGHT:
             # The back zone mirrors the caption-button band on the right:
             # its height, and its full width, so the glass fills the flank.
             self.setFixedHeight(FLAT_BUTTON_H)
             self.setMinimumWidth(CONTROLS_TRAILING_INSET)
         else:
-            self.setFixedHeight(30)
-        align='center' if CONTROLS_RIGHT else 'left'
-        self.setStyleSheet(f'QPushButton#liquidButton {{ background:transparent; border:none; padding:3px 12px; font-size:14px; font-weight:600; text-align:{align}; }}')
+            self.setFixedHeight(36)
+        self.setStyleSheet('QPushButton#liquidButton { background:transparent; border:none; padding:4px 16px; font-size:15px; font-weight:600; text-align:center; }')
 
     def fit_to_label(self):
-        width=max(80,self.sizeHint().width())
+        width=max(96,self.sizeHint().width())
         if CONTROLS_RIGHT:
             # The layout parks the pill on the flank: never wider than the
             # zone a translation hint can ougrow to nothing but minimum.
@@ -77,6 +82,35 @@ class BackCapsule(LiquidButton):
     def setText(self,text):
         super().setText(text)
         self.fit_to_label()
+
+    def paintEvent(self,event):
+        painter=QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        if self.hover:
+            painter.fillRect(self.rect(),QColor(255,255,255,round(18*self.hover)))
+        color=QColor(ColorThemeManager.instance().colors.text_primary)
+        painter.setPen(color)
+        self.icon().paint(painter,12,(self.height()-16)//2,16,16)
+        painter.drawText(self.rect().adjusted(34,0,-8,0),Qt.AlignVCenter|Qt.AlignLeft,self.text())
+
+
+class SectionHeading(QWidget):
+    def __init__(self,back,parent=None):
+        super().__init__(parent)
+        self.back=back
+
+    def paintEvent(self,event):
+        colors=ColorThemeManager.instance().colors
+        painter=QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        bounds=self.rect().adjusted(0,0,-1,-1)
+        shape=QPainterPath()
+        shape.addRoundedRect(bounds,18,18)
+        painter.fillPath(shape,QColor(colors.bg_secondary))
+        painter.setPen(QPen(QColor(colors.divider),1))
+        painter.drawPath(shape)
+        x=self.back.geometry().right()+4
+        painter.drawLine(x,8,x,self.height()-9)
 
 
 class LiquidNavBar(GlassPanel):
@@ -104,43 +138,46 @@ class LiquidNavBar(GlassPanel):
         self._controls_inset=0
         self._trailing_inset=CONTROLS_TRAILING_INSET
         root=QVBoxLayout(self)
-        root.setContentsMargins(self.LEADING_MARGIN,9,self.TRAILING_MARGIN,9)
-        root.setSpacing(5)
-        row=QHBoxLayout()
+        root.setContentsMargins(self.LEADING_MARGIN,TOP_MARGIN,self.TRAILING_MARGIN,4)
+        root.setSpacing(2)
+        row=QGridLayout()
         self._row=row
-        row.setSpacing(12)
+        row.setHorizontalSpacing(12)
+        row.setColumnStretch(1,1)
         self.back_btn=BackCapsule(self)
         self._configure_back_capsule()
         if on_back:
             self.back_btn.clicked.connect(on_back)
+        self.heading=SectionHeading(self.back_btn,self)
+        heading_layout=QHBoxLayout(self.heading)
+        heading_layout.setContentsMargins(3,2,14,2)
+        heading_layout.setSpacing(8)
+        heading_layout.addWidget(self.back_btn)
         self.icon_lbl=QLabel()
-        self.icon_lbl.setFixedSize(28,28)
-        row.addWidget(self.icon_lbl)
         self.title_lbl=QLabel(title)
-        self.title_lbl.setStyleSheet('font-size:22px;font-weight:650;background:transparent;')
+        self.title_lbl.setAlignment(Qt.AlignCenter)
+        self.title_lbl.setStyleSheet('font-size:27px;font-weight:650;background:transparent;')
+        self.icon_lbl.setFixedSize(30,30)
+        self.icon_lbl.setAlignment(Qt.AlignCenter)
+        title_group=QWidget(self)
+        title_layout=QHBoxLayout(title_group)
+        title_layout.setContentsMargins(0,0,0,0)
+        title_layout.setSpacing(7)
+        title_layout.addWidget(self.icon_lbl,0,Qt.AlignVCenter)
+        title_layout.addWidget(self.title_lbl,0,Qt.AlignVCenter)
+        title_group.setAttribute(Qt.WA_TransparentForMouseEvents)
+        heading_layout.addWidget(title_group)
+        row.addWidget(self.heading,0,0,1,2,Qt.AlignLeft | Qt.AlignVCenter)
         self._right_layout=QHBoxLayout()
-        if CONTROLS_RIGHT:
-            # The native-title-bar look: the pill fills its left flank (its
-            # zone mirrors the caption-buttons zone of the right edge), so
-            # equal stretches pin the header name to the middle.
-            row.addWidget(self.back_btn)
-            row.addStretch(1)
-            row.addWidget(self.title_lbl)
-            row.addStretch(1)
-            row.addLayout(self._right_layout)
-        else:
-            # macOS mirrored: window buttons own the top-left, so the pill
-            # takes the opposite corner — last item of the title row.
-            row.addWidget(self.title_lbl,1)
-            row.addLayout(self._right_layout)
-            row.addWidget(self.back_btn)
+        self._right_layout.addStretch(1)
+        row.addLayout(self._right_layout,0,2)
         root.addLayout(row)
         self._categories=QScrollArea()
         self._categories.setWidgetResizable(True)
         self._categories.setFrameShape(QScrollArea.NoFrame)
         self._categories.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._categories.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._categories.setFixedHeight(36)
+        self._categories.setFixedHeight(32)
         self._categories.setStyleSheet('background:transparent;border:none;')
         self._category_content=QWidget()
         self._category_layout=QHBoxLayout(self._category_content)
@@ -156,7 +193,7 @@ class LiquidNavBar(GlassPanel):
         self._scroll_animation=QVariantAnimation(self)
         self._scroll_animation.setEasingCurve(QEasingCurve.OutCubic)
         self._scroll_animation.valueChanged.connect(lambda value:self._categories.horizontalScrollBar().setValue(round(value)))
-        self.setFixedHeight(62)
+        self.setFixedHeight(_HEIGHT)
 
     def _configure_back_capsule(self):
         """Geometry + content of the back capsule under the window buttons."""
@@ -167,7 +204,7 @@ class LiquidNavBar(GlassPanel):
                                           self.devicePixelRatioF())))
         label=QCoreApplication.translate('Nugget','Back')
         button.setAccessibleName(label)
-        button.setToolTip(label)
+        button.setToolTip('')
         button.labelFitted.connect(self._apply_leading_margins)
         button.setText(label)   # also fits the button width
 
@@ -200,18 +237,14 @@ class LiquidNavBar(GlassPanel):
         root=self.layout()
         if root is None:
             return
-        # On the flat chrome the pill is the first row item and the title is
-        # pinned to the middle; the window buttons live top-right, so the
-        # right-side actions carry the clearance — the centred name is not
-        # pushed off-centre by it. On macOS the pill is the row's last item:
-        # the row never crosses the traffic lights on the left.
-        root.setContentsMargins(self.LEADING_MARGIN+self._controls_inset,9,
-                                self.TRAILING_MARGIN,9)
+        # Keep the back button and title together below the window controls.
+        root.setContentsMargins(self.LEADING_MARGIN,TOP_MARGIN,self.LEADING_MARGIN,4)
         self._row.setContentsMargins(0,0,0,0)
         # The row can refit its capsule before the right layout exists.
         right=getattr(self,'_right_layout',None)
         if right is not None:
             right.setContentsMargins(0,0,self._trailing_inset,0)
+            self._row.setColumnMinimumWidth(2,right.sizeHint().width()+self._trailing_inset)
 
     def set_back_visible(self,visible):
         self.back_btn.setVisible(visible)
@@ -237,7 +270,9 @@ class LiquidNavBar(GlassPanel):
     def set_icon(self,path):
         self.icon_lbl.setVisible(bool(path))
         if path:
-            self.icon_lbl.setPixmap(QPixmap(path).scaled(28,28,Qt.KeepAspectRatio,Qt.SmoothTransformation))
+            self.icon_lbl.setPixmap(theme_pixmap(
+                path, ColorThemeManager.instance().colors.text_primary,
+                30, self.devicePixelRatioF()))
 
     def set_categories(self,categories):
         while self._category_layout.count():
@@ -256,7 +291,7 @@ class LiquidNavBar(GlassPanel):
             self._category_layout.addWidget(button)
             self._category_buttons.append(button)
         self._category_layout.addStretch()
-        self.setFixedHeight(103 if len(categories)>1 else 62)
+        self.setFixedHeight(_HEIGHT_PILLS if len(categories)>1 else _HEIGHT)
 
     def _jump(self,selected,callback):
         self._selection_started=time.monotonic()

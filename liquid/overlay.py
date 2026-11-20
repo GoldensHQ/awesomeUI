@@ -7,7 +7,7 @@ second application walked thousands of widgets on the startup path (~0.3 s).
 The overlay is now composed into the single stylesheet MainWindow applies
 before the pages are built; ``_style`` only restyles the navigation bar.
 """
-from ..theme import ColorThemeManager
+from src.gui.theme.theme_manager import ColorThemeManager
 
 
 def liquid_overlay_css(colors=None) -> str:

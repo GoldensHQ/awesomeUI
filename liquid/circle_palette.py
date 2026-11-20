@@ -11,7 +11,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
-from ..theme import ColorThemeManager
+from src.gui.theme import ColorThemeManager
 
 from .appearance import GlassSlider
 

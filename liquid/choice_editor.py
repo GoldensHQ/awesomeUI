@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 from shiboken6 import isValid
 
-from ..theme import ColorThemeManager
+from src.gui.theme import ColorThemeManager
 
 from .value_editor import ValueEditor
 

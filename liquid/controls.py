@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from awesomeui.controls import IOSSwitch as BaseSwitch
-from ..theme import ColorThemeManager
+from src.gui.theme import ColorThemeManager
 
 from .motion import animate
 
@@ -225,6 +225,30 @@ class LiquidButton(QPushButton):
                                   max(0,min(1,position.y()/max(1,self.height()))))
         self.update()
 
+    def _drag_image(self):
+        if not self.property('menuItem'):
+            return self.grab()
+        dock=getattr(self.window(), 'bottom_navigation', None)
+        target=getattr(dock, 'buttons', {}).get(self.key) if dock is not None else None
+        if target is None:
+            return self.grab()
+        vertical=dock.edge in ('left','right')
+        size=QSize(50,40) if vertical else QSize(max(86,target.sizeHint().width()+4),42)
+        preview=LiquidButton(self.text(),key=self.key)
+        preview.setIcon(target.icon())
+        preview.setIconSize(target.iconSize())
+        preview.setFont(target.font())
+        preview.setStyleSheet(target.styleSheet())
+        preview.setProperty('dockItem',True)
+        preview.setProperty('menuItem',False)
+        preview.setProperty('iconOnly',vertical)
+        preview.resize(size)
+        image=QPixmap(size)
+        image.fill(Qt.transparent)
+        preview.render(image)
+        preview.deleteLater()
+        return image
+
     def mouseMoveEvent(self, event):
         if self.property('dockItem'):
             self._track_dock_pointer(event.position())
@@ -233,8 +257,10 @@ class LiquidButton(QPushButton):
             mime = QMimeData()
             mime.setData('application/x-goldennugget-dock', self.key.encode())
             drag.setMimeData(mime)
-            drag.setPixmap(self.grab())
-            drag.setHotSpot(self._press)
+            image=self._drag_image()
+            drag.setPixmap(image)
+            drag.setHotSpot(QPointF(self._press.x()*image.width()/max(1,self.width()),
+                                   self._press.y()*image.height()/max(1,self.height())).toPoint())
             self._press = None
             self.setProperty('dragGhost',True)
             self.update()
@@ -424,11 +450,7 @@ class LiquidBrand(LiquidButton):
         self.reveal=1.0
         self.phase=0.0
         self.setAccessibleName('GoldenNugget')
-        try:  # host-app slogans (GoldenNugget); standalone builds fall back to ''
-            from src.gui.slogans import launch_slogan
-        except ImportError:
-            def launch_slogan():
-                return ''
+        from ..slogans import launch_slogan
         self._slogan=launch_slogan()
         self.setAccessibleDescription(self._slogan)
         self.shimmer=QVariantAnimation(self)
@@ -470,15 +492,32 @@ class LiquidBrand(LiquidButton):
                            (.8,'#C99744'),(1,'#91602D')):
             gradient.setColorAt(stop,QColor(color))
         hover=max(0.0,min(1.0,self.hover))
-        if hover:
-            p.setOpacity(hover*.18)
-            p.setBrush(gradient)
-            p.drawRoundedRect(QRectF(2,3,46,42),13,13)
-            p.setOpacity(1.0)
         fitted=self.logo.size().scaled(38,38,Qt.KeepAspectRatio)
         x=(50-fitted.width())/2
         y=(48-fitted.height())/2
-        p.drawPixmap(QRectF(x,y,fitted.width(),fitted.height()),self.logo,QRectF(self.logo.rect()))
+        icon_rect=QRectF(x,y,fitted.width(),fitted.height())
+        p.drawPixmap(icon_rect,self.logo,QRectF(self.logo.rect()))
+        if hover:
+            sheen=QPixmap(fitted)
+            sheen.fill(Qt.transparent)
+            overlay=QPainter(sheen)
+            overlay.drawPixmap(QRectF(sheen.rect()),self.logo,QRectF(self.logo.rect()))
+            overlay.setCompositionMode(QPainter.CompositionMode_SourceIn)
+            width,height=sheen.width(),sheen.height()
+            center=(-.4+1.8*self.phase)*width
+            flowing=QLinearGradient(center-width*.4,0,center+width*.4,height*.25)
+            flowing.setColorAt(0,QColor(173,101,17,0))
+            flowing.setColorAt(.25,QColor(224,149,28,90))
+            flowing.setColorAt(.5,QColor(255,222,119,230))
+            flowing.setColorAt(.75,QColor(235,169,44,100))
+            flowing.setColorAt(1,QColor(173,101,17,0))
+            overlay.fillRect(sheen.rect(),flowing)
+            overlay.end()
+            p.setOpacity(hover*.85)
+            p.setCompositionMode(QPainter.CompositionMode_Screen)
+            p.drawPixmap(icon_rect,sheen,QRectF(sheen.rect()))
+            p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+            p.setOpacity(1.0)
         if self.compact:
             return
         p.setOpacity(self.reveal)
@@ -573,6 +612,16 @@ class LiquidActionButton(LiquidButton):
             self._stretch_surface.hide()
         self.update()
 
+    def set_hover_locked(self, locked):
+        """Keep the stretched pill hidden while a sheet floats above the button:
+        its bulge would otherwise poke into the gap between the sheet and the
+        button."""
+        self._hover_locked = bool(locked)
+        if self._hover_locked:
+            self._cancel_scroll_hover()
+        else:
+            self._scroll_hover_suspended = False
+
     def wheelEvent(self, event):
         self._cancel_scroll_hover()
         super().wheelEvent(event)
@@ -589,6 +638,7 @@ class LiquidActionButton(LiquidButton):
         if self._stretch_surface is not None:
             self._stretch_surface.sync()
             if (self.hover <= 0 or self._scroll_hover_suspended
+                    or getattr(self, '_hover_locked', False)
                     or QApplication.instance().property('liquid_reduce_motion')):
                 self._stretch_surface.hide()
             elif self.isVisible() and self._stretch_surface.isHidden():
@@ -604,7 +654,7 @@ class LiquidActionButton(LiquidButton):
         super().hideEvent(event)
 
     def _hover_to(self, target):
-        if target and self._scroll_hover_suspended:
+        if target and (self._scroll_hover_suspended or getattr(self, '_hover_locked', False)):
             return
         if not self.property('homeAction'):
             return super()._hover_to(target)
@@ -711,7 +761,7 @@ class LiquidActionButton(LiquidButton):
         p.setFont(QFont('Inter Variable',12,QFont.DemiBold))
         from PySide6.QtGui import QFontMetricsF
 
-        from ..theme import theme_pixmap
+        from src.gui.theme import theme_pixmap
         title_rect=QRectF(rect)
         if self._action_footer:
             title_rect.setHeight(22)

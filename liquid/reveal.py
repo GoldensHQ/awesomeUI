@@ -1,4 +1,4 @@
-from PySide6.QtCore import QEasingCurve, QObject, QRectF, Qt, QTimer, QVariantAnimation
+from PySide6.QtCore import QEasingCurve, QObject, QRect, QRectF, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QColor, QLinearGradient, QPainter
 from PySide6.QtWidgets import QApplication, QGraphicsEffect, QWidget
 
@@ -97,9 +97,14 @@ class DevicePeek(QWidget):
         if self.window.liquid.device.isVisible():
             self.dismiss()
             return
+        from src.gui.window_chrome import DRAG_STRIP_HEIGHT
+
         button=self.window.liquid.device_button
         x=max(12,min(button.x()-20,self.window.width()-192))
-        self.setGeometry(x,button.y()-278,180,278)
+        preview=QRect(x,button.y()-268,180,278)
+        if preview.top()<DRAG_STRIP_HEIGHT+6:
+            preview.moveTop(button.geometry().bottom()+4)
+        self.setGeometry(preview)
         self.show()
         self.raise_()
         self.motion.stop()

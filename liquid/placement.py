@@ -54,37 +54,22 @@ def reveal_panel(panel,window,anchor,size,edge):
 
 
 def sheet_rect(window,anchor,size):
+    from src.gui.window_chrome import DRAG_STRIP_HEIGHT
+
     origin=QRect(anchor.mapTo(window,QPoint(0,0)),anchor.size())
     width=min(size.width(),window.width()-24)
-    height=min(size.height(),max(120,origin.top()-12))
+    top=DRAG_STRIP_HEIGHT+6
+    above=max(0,origin.top()-8-top)
+    below=max(0,window.height()-origin.bottom()-20)
+    place_below=above<size.height() and below>above
+    height=min(size.height(),below if place_below else above)
     x=max(12,min(origin.center().x()-width//2,window.width()-width-12))
-    return QRect(x,origin.top()-height+3,width,height)
+    y=origin.bottom()+8 if place_below else origin.top()-height-8
+    return QRect(x,max(top,y),width,height)
 
 
 def reveal_sheet(panel,window,anchor,size,*,duration=540,extend_from_button=False):
-    from PySide6.QtWidgets import QGraphicsEffect
-    class EjectEffect(QGraphicsEffect):
-        def __init__(self,parent):
-            super().__init__(parent)
-            self.amount=0.0
-
-        def draw(self,painter):
-            painter.save()
-            painter.setOpacity(.15+.85*self.amount)
-            if extend_from_button:
-                height=anchor.height()+(panel.height()-anchor.height())*self.amount
-                painter.setClipRect(0,round(panel.height()-height),panel.width(),round(height))
-                painter.translate(0,14*(1-self.amount))
-                self.drawSource(painter)
-                painter.restore()
-                return
-            painter.translate(panel.width()/2,panel.height())
-            painter.translate(0,18*(1-self.amount))
-            painter.scale(.975+.025*self.amount,.95+.05*self.amount)
-            painter.translate(-panel.width()/2,-panel.height())
-            self.drawSource(painter)
-            painter.restore()
-
+    from PySide6.QtCore import QEasingCurve
     for animation in list(getattr(panel,'_liquid_animations',())):
         animation.stop()
         animation.deleteLater()
@@ -92,15 +77,17 @@ def reveal_sheet(panel,window,anchor,size,*,duration=540,extend_from_button=Fals
     panel.hide()
     panel.clearMask()
     panel.setGeometry(sheet_rect(window,anchor,size))
-    effect=EjectEffect(panel)
-    panel.setGraphicsEffect(effect)
     panel.show()
     panel.raise_()
     def step(value):
-        effect.amount=float(value)
+        # Mask clip instead of a QGraphicsEffect: an effect re-renders the
+        # whole panel subtree offscreen on EVERY frame (the apply-review sheet
+        # is a scroll area + device render), which made the buttons feel laggy.
+        # A mask only limits the paint region, so each frame costs a sliver.
+        amount=max(1,round(panel.height()*float(value)))
+        panel.setMask(QRegion(0,panel.height()-amount,panel.width(),amount))
         panel._flow=float(value)
-        effect.update()
         panel.update()
-    from PySide6.QtCore import QEasingCurve
+    step(0)
     animate(panel,0.0,1.0,step,duration=duration,easing=QEasingCurve.InOutCubic,
-            finished=lambda:panel.setGraphicsEffect(None))
+            finished=panel.clearMask)

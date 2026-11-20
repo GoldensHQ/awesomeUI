@@ -109,7 +109,7 @@ class SelectionCard(QWidget):
         label=getattr(self,'action_label',None)
         if label is None or not isValid(label) or not isValid(self.switch):
             return
-        from ..theme import ColorThemeManager
+        from src.gui.theme import ColorThemeManager
         colors=ColorThemeManager.instance().colors
         checked=self.switch.isChecked()
         state=(checked,colors.text_primary,colors.text_secondary)
@@ -223,7 +223,7 @@ def bind_selection_card(card, switch, *, favorite_feedback=False):
     switch._selection_surface = card._selection_surface
     from PySide6.QtGui import QFont
 
-    from ..theme import ColorThemeManager
+    from src.gui.theme import ColorThemeManager
     if favorite_feedback:
         from .favorite_feedback import FavoriteFeedbackLabel
         label = FavoriteFeedbackLabel(card)

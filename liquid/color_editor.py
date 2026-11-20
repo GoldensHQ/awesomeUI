@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ..theme import ColorThemeManager
+from src.gui.theme import ColorThemeManager
 
 from .appearance import GlassSlider
 from .circle_palette import ColorWheel
