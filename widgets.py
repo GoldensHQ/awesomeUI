@@ -812,7 +812,7 @@ class Sidebar(QFrame):
             accent_tint = _rgba(t.active_indicator, 34)
             self.setStyleSheet(
                 f"QFrame#Sidebar {{ background: {_rgba(t.background, 150)}; "
-                "border-right: 1px solid rgba(255, 255, 255, 26); }}"
+                "border-right: 1px solid rgba(255, 255, 255, 26); }"
                 "QFrame#Sidebar QLabel, QFrame#Sidebar QWidget "
                 "{ background: transparent; }"
                 f"QLabel#SidebarSection {{ color: {t.text_muted}; font-size: 11px; "
